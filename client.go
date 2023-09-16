@@ -20,7 +20,9 @@ import (
 
 const clearScreen = "\033[H\033[2J"
 
-const torrentBlockListURL = "http://john.bitsurge.net/public/biglist.p2p.gz"
+const torrentBlockListURL = "https://github.com/Naunter/BT_BlockLists/raw/master/bt_blocklists.gz"
+
+const trackerUrl = "https://trackerslist.com/best.txt"
 
 var isHTTP = regexp.MustCompile(`^https?:\/\/`)
 
@@ -56,7 +58,7 @@ type ClientConfig struct {
 // NewClientConfig creates a new default configuration.
 func NewClientConfig() ClientConfig {
 	return ClientConfig{
-		Port:           8080,
+		Port:           8901,
 		TorrentPort:    50007,
 		Seed:           false,
 		TCP:            true,
@@ -72,12 +74,16 @@ func NewClient(cfg ClientConfig) (client Client, err error) {
 
 	client.Config = cfg
 
-	blocklist := getBlocklist()
+	downloadFolder, _ := os.Getwd()
+	downloadFolder = downloadFolder + "/download"
 	torrentConfig := torrent.NewDefaultClientConfig()
-	torrentConfig.DataDir = os.TempDir()
+	torrentConfig.DataDir = downloadFolder
 	torrentConfig.NoUpload = !cfg.Seed
 	torrentConfig.DisableTCP = !cfg.TCP
 	torrentConfig.ListenPort = cfg.TorrentPort
+	torrentConfig.DisableIPv6 = true
+	torrentConfig.DisableUTP = true
+	blocklist := getBlocklist()
 	torrentConfig.IPBlocklist = blocklist
 
 	// Create client.
@@ -111,6 +117,8 @@ func NewClient(cfg ClientConfig) (client Client, err error) {
 		}
 	}
 
+	t.AddTrackers(getTrackerlist())
+
 	client.Torrent = t
 	client.Torrent.SetMaxEstablishedConns(cfg.MaxConnections)
 
@@ -131,9 +139,57 @@ func NewClient(cfg ClientConfig) (client Client, err error) {
 }
 
 // Download and add the blocklist.
+func getTrackerlist() [][]string {
+	var err error
+	var b []byte
+	pwd, _ := os.Getwd()
+	pwd = pwd + "/best.txt"
+	trackerlistPath := pwd
+
+	if _, err = os.Stat(trackerlistPath); os.IsNotExist(err) {
+		err = downloadTrackerList(trackerlistPath)
+	}
+
+	if err != nil {
+		log.Printf("Error downloading trackers list: %s", err)
+		return nil
+	}
+
+	// Load blocklist.
+	// #nosec
+	// We trust our temporary directory as we just wrote the file there ourselves.
+	trackerlistReader, err := os.Open(trackerlistPath)
+	if err != nil {
+		log.Printf("Error opening trackers list: %s", err)
+		return nil
+	}
+
+	b, err = ioutil.ReadAll(trackerlistReader)
+	if err != nil {
+		log.Printf("Error reading trackers list: %s", err)
+		return nil
+	}
+
+	content := make([][]string, 0)
+	for _, v := range strings.Split(string(b), "\n") {
+		if len(strings.Trim(v, " ")) > 0 {
+			k := make([]string, 0)
+			k = append(k, v)
+			content = append(content, k)
+		}
+	}
+
+	log.Printf("Loading trackers list.\nFound %d ranges\n", len(content))
+	return content
+
+}
+
+// Download and add the blocklist.
 func getBlocklist() iplist.Ranger {
 	var err error
-	blocklistPath := os.TempDir() + "/go-peerflix-blocklist.gz"
+	pwd, _ := os.Getwd()
+	pwd = pwd + "/go-peerflix-blocklist.gz"
+	blocklistPath := pwd
 
 	if _, err = os.Stat(blocklistPath); os.IsNotExist(err) {
 		err = downloadBlockList(blocklistPath)
@@ -180,6 +236,17 @@ func downloadBlockList(blocklistPath string) (err error) {
 	}
 
 	return os.Rename(fileName, blocklistPath)
+}
+
+func downloadTrackerList(trackerListPath string) (err error) {
+	log.Printf("Downloading trackerList")
+	fileName, err := downloadFile(trackerUrl)
+	if err != nil {
+		log.Printf("Error downloading tracker list: %s\n", err)
+		return
+	}
+
+	return os.Rename(fileName, trackerListPath)
 }
 
 // Close cleans up the connections.

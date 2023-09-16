@@ -25,8 +25,8 @@ func (f *FileEntry) Seek(offset int64, whence int) (int64, error) {
 
 // NewFileReader sets up a torrent file for streaming reading.
 func NewFileReader(f *torrent.File) (SeekableContent, error) {
-	torrent := f.Torrent()
-	reader := torrent.NewReader()
+	t := f.Torrent()
+	reader := t.NewReader()
 
 	// We read ahead 1% of the file continuously.
 	reader.SetReadahead(f.Length() / 100)
